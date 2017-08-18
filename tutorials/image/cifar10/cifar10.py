@@ -239,21 +239,58 @@ def inference(images):
 
   # local3
   with tf.variable_scope('local3') as scope:
-    # Move everything into depth so we can perform a single matrix multiply.
-    reshape = tf.reshape(pool2, [FLAGS.batch_size, -1])
-    dim = reshape.get_shape()[1].value
-    weights = _variable_with_weight_decay('weights', shape=[dim, 384],
-                                          stddev=0.04, wd=0.004)
-    biases = _variable_on_cpu('biases', [384], tf.constant_initializer(0.1))
-    local3 = tf.nn.relu(tf.matmul(reshape, weights) + biases, name=scope.name)
-    _activation_summary(local3)
+      # local connections (unshared filter)
+      shape = pool2.get_shape()
+      h = shape[1].value
+      w = shape[2].value
+      sz_local = 3  # kernel size
+      sz_patch = (sz_local ** 2) * shape[3].value #that is the number of elements of each local filter
+      n_channels_out = 64;
+
+      # Extract 3x3 tensor patches
+      patches = tf.extract_image_patches(pool2, [1, sz_local, sz_local, 1], [1, 1, 1, 1], [1, 1, 1, 1], 'SAME')
+      weights = _variable_with_weight_decay('weights', shape=[1, h, w, sz_patch, n_channels_out], stddev=5e-2, wd=0.0)
+      biases = _variable_on_cpu('biases', [h, w, n_channels_out], tf.constant_initializer(0.1))
+
+      # "Filter" each patch with its own kernel
+      mul = tf.multiply(tf.expand_dims(patches, axis=-1), weights)
+      ssum = tf.reduce_sum(mul, axis=3)#sum up on all the filter. TODO: insert this into a matrix multiplication?
+      pre_activation = tf.add(ssum, biases)
+      local3 = tf.nn.relu(pre_activation, name=scope.name)
+
+      # Move everything into depth so we can perform a single matrix multiply.
+      # reshape = tf.reshape(pool2, [FLAGS.batch_size, -1])
+      # dim = reshape.get_shape()[1].value
+      # weights = _variable_with_weight_decay('weights', shape=[dim, 384],
+      #                                       stddev=0.04, wd=0.004)
+      # biases = _variable_on_cpu('biases', [384], tf.constant_initializer(0.1))
+      # local3 = tf.nn.relu(tf.matmul(reshape, weights) + biases, name=scope.name)
+      _activation_summary(local3)
 
   # local4
   with tf.variable_scope('local4') as scope:
-    weights = _variable_with_weight_decay('weights', shape=[384, 192],
-                                          stddev=0.04, wd=0.004)
-    biases = _variable_on_cpu('biases', [192], tf.constant_initializer(0.1))
-    local4 = tf.nn.relu(tf.matmul(local3, weights) + biases, name=scope.name)
+      # local connections (unshared filter)
+    shape = local3.get_shape()
+    h = shape[1].value
+    w = shape[2].value
+    sz_local = 3  # kernel size
+    sz_patch = (sz_local ** 2) * shape[3].value  # that is the number of elements of each local filter
+    n_channels_out = 64;
+
+    # Extract 3x3 tensor patches
+    patches = tf.extract_image_patches(local3, [1, sz_local, sz_local, 1], [1, 1, 1, 1], [1, 1, 1, 1], 'SAME')
+    weights = _variable_with_weight_decay('weights', shape=[1, h, w, sz_patch, n_channels_out], stddev=5e-2, wd=0.0)
+    biases = _variable_on_cpu('biases', [h, w, n_channels_out], tf.constant_initializer(0.1))
+
+    # "Filter" each patch with its own kernel
+    mul = tf.multiply(tf.expand_dims(patches, axis=-1), weights)
+    ssum = tf.reduce_sum(mul, axis=3)  # sum up on all the filter. TODO: insert this into a matrix multiplication?
+    pre_activation = tf.add(ssum, biases)
+    local4 = tf.nn.relu(pre_activation, name=scope.name)
+    # weights = _variable_with_weight_decay('weights', shape=[384, 192],
+    #                                       stddev=0.04, wd=0.004)
+    # biases = _variable_on_cpu('biases', [192], tf.constant_initializer(0.1))
+    # local4 = tf.nn.relu(tf.matmul(local3, weights) + biases, name=scope.name)
     _activation_summary(local4)
 
   # linear layer(WX + b),
@@ -261,14 +298,22 @@ def inference(images):
   # tf.nn.sparse_softmax_cross_entropy_with_logits accepts the unscaled logits
   # and performs the softmax internally for efficiency.
   with tf.variable_scope('softmax_linear') as scope:
-    weights = _variable_with_weight_decay('weights', [192, NUM_CLASSES],
-                                          stddev=1/192.0, wd=0.0)
-    biases = _variable_on_cpu('biases', [NUM_CLASSES],
-                              tf.constant_initializer(0.0))
-    softmax_linear = tf.add(tf.matmul(local4, weights), biases, name=scope.name)
-    _activation_summary(softmax_linear)
+      # Move everything into depth so we can perform a single matrix multiply.
+      reshape = tf.reshape(local4, [FLAGS.batch_size, -1])
+      dim = reshape.get_shape()[1].value
+      weights = _variable_with_weight_decay('weights', shape=[dim, NUM_CLASSES],
+                                            stddev=1 / float(dim), wd=0.0)
+      biases = _variable_on_cpu('biases', [NUM_CLASSES], tf.constant_initializer(0.0))
+      softmax_linear = tf.nn.softmax(tf.matmul(reshape, weights) + biases, name=scope.name)
 
-  return softmax_linear
+
+      # weights = _variable_with_weight_decay('weights', [192, NUM_CLASSES],
+      #                                       stddev=1/192.0, wd=0.0)
+      # biases = _variable_on_cpu('biases', [NUM_CLASSES],
+      #                           tf.constant_initializer(0.0))
+      # softmax_linear = tf.nn.softmax( tf.add(tf.matmul(local4, weights), biases), name=scope.name)
+      _activation_summary(softmax_linear)
+      return softmax_linear
 
 
 def loss(logits, labels):
