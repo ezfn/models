@@ -44,6 +44,8 @@ from six.moves import urllib
 import tensorflow as tf
 
 import cifar10_input
+import math
+import numpy as np
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -243,14 +245,18 @@ def inference(images):
       shape = pool2.get_shape()
       h = shape[1].value
       w = shape[2].value
-      sz_local = 3  # kernel size
-      sz_patch = (sz_local ** 2) * shape[3].value #that is the number of elements of each local filter
-      n_channels_out = 64;
+      inputSz = np.array([h,w]).astype(float);
+      nSlices = 2
+      filterSize = np.ceil( inputSz / nSlices)
+      strides = filterSize-1 #give an overlap of 1
+      n_channels_out = 64
 
-      # Extract 3x3 tensor patches
-      patches = tf.extract_image_patches(pool2, [1, sz_local, sz_local, 1], [1, 1, 1, 1], [1, 1, 1, 1], 'SAME')
-      weights = _variable_with_weight_decay('weights', shape=[1, h, w, sz_patch, n_channels_out], stddev=5e-2, wd=0.0)
-      biases = _variable_on_cpu('biases', [h, w, n_channels_out], tf.constant_initializer(0.1))
+      # Extract h/nSlices x w/nSlices tensor patches
+      patches = tf.extract_image_patches(pool2, [1, filterSize[0], filterSize[1], 1], [1, strides[0], strides[1], 1], [1, 1, 1, 1], 'VALID')
+      shape = patches.get_shape()
+      numOfPatches = shape[3].value
+      weights = _variable_with_weight_decay('weights', shape=[1, shape[1].value, shape[2].value, numOfPatches, n_channels_out], stddev=0.1, wd=0.0)
+      biases = _variable_on_cpu('biases', [shape[1].value, shape[2].value, n_channels_out], tf.constant_initializer(0))
 
       # "Filter" each patch with its own kernel
       mul = tf.multiply(tf.expand_dims(patches, axis=-1), weights)
@@ -273,14 +279,18 @@ def inference(images):
     shape = local3.get_shape()
     h = shape[1].value
     w = shape[2].value
-    sz_local = 3  # kernel size
-    sz_patch = (sz_local ** 2) * shape[3].value  # that is the number of elements of each local filter
-    n_channels_out = 64;
+    inputSz = np.array([h, w]).astype(float);
+    nSlices = 1
+    filterSize = np.ceil(inputSz / nSlices)
+    strides = filterSize-1
+    n_channels_out = 128
 
-    # Extract 3x3 tensor patches
-    patches = tf.extract_image_patches(local3, [1, sz_local, sz_local, 1], [1, 1, 1, 1], [1, 1, 1, 1], 'SAME')
-    weights = _variable_with_weight_decay('weights', shape=[1, h, w, sz_patch, n_channels_out], stddev=5e-2, wd=0.0)
-    biases = _variable_on_cpu('biases', [h, w, n_channels_out], tf.constant_initializer(0.1))
+    # Extract h/nSlices x w/nSlices tensor patches
+    patches = tf.extract_image_patches(local3, [1, filterSize[0], filterSize[1], 1], [1, strides[0], strides[1], 1], [1, 1, 1, 1], 'VALID')
+    shape = patches.get_shape()
+    numOfPatches = shape[3].value
+    weights = _variable_with_weight_decay('weights', shape=[1, shape[1].value, shape[2].value, numOfPatches, n_channels_out], stddev=0.1, wd=0.0)
+    biases = _variable_on_cpu('biases', [shape[1].value, shape[2].value, n_channels_out], tf.constant_initializer(0))
 
     # "Filter" each patch with its own kernel
     mul = tf.multiply(tf.expand_dims(patches, axis=-1), weights)
